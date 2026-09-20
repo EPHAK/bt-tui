@@ -80,4 +80,4 @@ already track.
 
 ## License
 
-MIT
+[MIT](LICENSE)
