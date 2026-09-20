@@ -2,24 +2,20 @@
 PipeWire/PulseAudio-compat helpers for Bluetooth audio codec inspection and
 profile (codec) switching.
 
-Everything here shells out to `pactl` and `pw-dump`, both confirmed against
-the real running system (pactl 17.0 supports `-f json`; pw-dump emits a flat
-list of PipeWire objects with `type`/`info`/`props`). Nothing here is a
-guess at a schema -- see bt-tui's build notes for the exact commands used
-to verify each field before this was written.
+Shells out to `pactl -f json` and `pw-dump`, both of which emit structured
+JSON: pactl's card objects include `active_profile` and a `profiles` dict
+of {profile_name: {description, available, ...}}; pw-dump emits a flat
+list of PipeWire objects with `type`/`info`/`props`.
 
-Real, confirmed property/profile facts this module relies on:
+Notes:
   - `api.bluez5.codec` on a PipeWire node is the active A2DP codec name
     (e.g. "sbc", "sbc_xq", "aac", "aptx", "aptx_hd", "ldac", "lc3").
-  - `pactl -f json list cards` gives each card's `active_profile` and a
-    `profiles` dict of {profile_name: {description, available, ...}}.
-    For a connected bluez5 device, each supported codec shows up as its
-    own selectable profile (this is how codec switching is actually
-    exposed -- there is no separate "set codec" call, you switch profile).
+  - For a connected bluez5 device, each supported codec is exposed as its
+    own selectable card profile -- there is no separate "set codec" call;
+    switching codec means switching profile.
   - LDAC has an additional quality knob (`bluez5.a2dp.ldac.quality`:
-    auto/hq/sq/mq) that is a WirePlumber *config* setting, not something
-    switchable per-connection at runtime -- documented here as a real
-    limitation rather than papered over.
+    auto/hq/sq/mq) that is a WirePlumber config-file setting, not
+    something switchable per-connection at runtime.
 """
 from __future__ import annotations
 

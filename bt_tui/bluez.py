@@ -1,9 +1,9 @@
 """
-Thin async wrapper around the real BlueZ D-Bus API.
+Thin async wrapper around the BlueZ D-Bus API.
 
-Every interface/method/property name here was confirmed live against a
-running bluetoothd via `busctl --system introspect org.bluez ...` before
-being used -- nothing here is guessed from BlueZ documentation alone.
+Interface/method/property names follow the org.bluez D-Bus API as exposed
+by bluetoothd (introspectable via `busctl --system introspect org.bluez
+/org/bluez/hciX`).
 """
 from __future__ import annotations
 
@@ -80,10 +80,9 @@ class PairingAgent(ServiceInterface):
     instead of auto-accepting or auto-rejecting.
 
     `ask_pin` / `ask_confirm` are awaitable callbacks the TUI supplies to
-    actually prompt the user; this class only implements the D-Bus surface.
-    Every method name/signature below is the real org.bluez.Agent1 contract,
-    confirmed against BlueZ's own agent API (object-path/string/uint32/byte
-    D-Bus type codes: o/s/u/y).
+    actually prompt the user; this class only implements the D-Bus surface,
+    following the org.bluez.Agent1 method signatures (D-Bus type codes:
+    o=object path, s=string, u=uint32, y=byte).
     """
 
     def __init__(self, ask_pin: Callable, ask_confirm: Callable, notify: Callable):

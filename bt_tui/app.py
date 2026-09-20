@@ -117,9 +117,8 @@ class DeviceDetailScreen(ModalScreen[None]):
         self.card_name = None
 
         try:
-            # subprocess.run (pw-dump) blocks -- confirmed the same class of
-            # UI-freeze bug found in eqt's apply-to-EasyEffects call. Off-
-            # thread here too, since this fires on every detail-screen open.
+            # pw-dump via subprocess.run blocks; this runs on every
+            # detail-screen open, so keep it off the event loop.
             nodes = await asyncio.to_thread(pipewire.list_bluez_audio_nodes)
         except Exception as e:
             codec_status.update(f"[red]could not read PipeWire state: {e}[/red]")
@@ -153,10 +152,9 @@ class DeviceDetailScreen(ModalScreen[None]):
             item.available = p.available
             await profile_list.append(item)
 
-        # ListView.index stays None after programmatically appending items --
-        # confirmed live: without this, arrow keys/enter on the list had no
-        # effect at all, since there was never an initial highlighted item
-        # for them to act on. Default to the currently active profile.
+        # ListView.index stays None after items are appended
+        # programmatically, so arrow keys/Enter have nothing to act on
+        # until an initial index is set. Default to the active profile.
         if len(profile_list.children) > 0:
             profile_list.index = active_index
 
@@ -171,9 +169,9 @@ class DeviceDetailScreen(ModalScreen[None]):
         except Exception as e:
             self.app_ref.notify(f"Failed to switch profile: {e}", severity="error")
         # PipeWire tears down and recreates the bluez5 node on a profile
-        # switch -- confirmed live: refreshing immediately can catch the
-        # gap and show "not an active audio node" even though the switch
-        # itself succeeded. A short wait avoids that stale-looking read.
+        # switch. Refreshing immediately can read that gap and show "not
+        # an active audio node" even though the switch succeeded, so wait
+        # briefly before re-reading.
         await asyncio.sleep(0.6)
         await self.refresh_codec_panel()
 
@@ -226,10 +224,8 @@ class BtTuiApp(App):
     ]
     # "enter" for details is handled via on_data_table_row_selected below,
     # not an app-level Binding: DataTable consumes the Enter keypress
-    # itself to fire RowSelected before it would ever bubble up to an
-    # App-level binding, confirmed by testing (a bound app-level "enter"
-    # action never fired while the table had focus; calling the action
-    # directly worked fine, isolating it to key-dispatch, not the logic).
+    # itself to fire RowSelected before it would bubble up to an
+    # app-level binding.
 
     def __init__(self):
         super().__init__()
@@ -342,12 +338,10 @@ class BtTuiApp(App):
 
     # These three are invoked from PairingAgent's D-Bus method callbacks
     # (dbus_next's own asyncio task, not a Textual action/worker), so
-    # push_screen_wait can't be called directly from them -- confirmed by
-    # testing: it raises "NoActiveWorker" outside a worker context, the
-    # exact same issue found and fixed in eqt's action methods, just
-    # reached from a different kind of caller here. Fixed the same way,
-    # via a worker, since these callers aren't already Textual actions
-    # that `@work` could decorate directly.
+    # push_screen_wait requires an explicit worker here -- it raises
+    # NoActiveWorker outside one. Actions bound via BINDINGS can use the
+    # `@work` decorator directly; these callers cannot, since they aren't
+    # Textual actions.
     async def ask_pin(self, device_path: str, mode: str) -> str:
         worker = self.run_worker(self.push_screen_wait(PinModal(device_path, mode)))
         result = await worker.wait()
@@ -375,7 +369,8 @@ def _find_device(devices: list, identifier: str):
     """
     Match by address if it looks like one (AA:BB:CC:DD:EE:FF), otherwise by
     name/alias: exact case-insensitive match first, then a substring match
-    so "zeb" finds "ZEB-COUNTY 8" without typing the full name.
+    so a short substring like "pixel" can match "Pixel Buds Pro" without
+    typing the full name.
     """
     if _looks_like_address(identifier):
         return next((d for d in devices if d.address.lower() == identifier.lower()), None)
