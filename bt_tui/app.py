@@ -117,7 +117,10 @@ class DeviceDetailScreen(ModalScreen[None]):
         self.card_name = None
 
         try:
-            nodes = pipewire.list_bluez_audio_nodes()
+            # subprocess.run (pw-dump) blocks -- confirmed the same class of
+            # UI-freeze bug found in eqt's apply-to-EasyEffects call. Off-
+            # thread here too, since this fires on every detail-screen open.
+            nodes = await asyncio.to_thread(pipewire.list_bluez_audio_nodes)
         except Exception as e:
             codec_status.update(f"[red]could not read PipeWire state: {e}[/red]")
             return
@@ -132,7 +135,7 @@ class DeviceDetailScreen(ModalScreen[None]):
         else:
             codec_status.update("[dim]not currently an active audio node (connect audio first)[/dim]")
 
-        card = pipewire.find_bluez_card(self.device.address)
+        card = await asyncio.to_thread(pipewire.find_bluez_card, self.device.address)
         if not card:
             await profile_list.append(ListItem(Label("[dim]no PipeWire card for this device yet[/dim]")))
             return
@@ -163,7 +166,7 @@ class DeviceDetailScreen(ModalScreen[None]):
         if not profile_name or not getattr(item, "available", False) or not self.card_name:
             return
         try:
-            pipewire.set_card_profile(self.card_name, profile_name)
+            await asyncio.to_thread(pipewire.set_card_profile, self.card_name, profile_name)
             self.app_ref.notify(f"Switched profile to {profile_name}")
         except Exception as e:
             self.app_ref.notify(f"Failed to switch profile: {e}", severity="error")
@@ -363,13 +366,41 @@ class BtTuiApp(App):
         await worker.wait()
 
 
-async def _headless_disconnect(address: str) -> int:
+def _looks_like_address(s: str) -> bool:
+    parts = s.split(":")
+    return len(parts) == 6 and all(len(p) == 2 for p in parts)
+
+
+def _find_device(devices: list, identifier: str):
+    """
+    Match by address if it looks like one (AA:BB:CC:DD:EE:FF), otherwise by
+    name/alias: exact case-insensitive match first, then a substring match
+    so "zeb" finds "ZEB-COUNTY 8" without typing the full name.
+    """
+    if _looks_like_address(identifier):
+        return next((d for d in devices if d.address.lower() == identifier.lower()), None)
+
+    lowered = identifier.lower()
+    exact = [d for d in devices if d.display_name.lower() == lowered]
+    if exact:
+        return exact[0]
+    partial = [d for d in devices if lowered in d.display_name.lower()]
+    if len(partial) == 1:
+        return partial[0]
+    if len(partial) > 1:
+        names = ", ".join(d.display_name for d in partial)
+        print(f"'{identifier}' matches multiple devices: {names} -- be more specific")
+        return None
+    return None
+
+
+async def _headless_disconnect(identifier: str) -> int:
     client = BluezClient()
     await client.connect()
     devices = await client.list_devices()
-    match = next((d for d in devices if d.address.lower() == address.lower()), None)
+    match = _find_device(devices, identifier)
     if not match:
-        print(f"no known device with address {address}")
+        print(f"no known device matching {identifier!r}")
         return 1
     try:
         await client.disconnect_device(match.path)
@@ -380,13 +411,13 @@ async def _headless_disconnect(address: str) -> int:
         return 1
 
 
-async def _headless_connect(address: str) -> int:
+async def _headless_connect(identifier: str) -> int:
     client = BluezClient()
     await client.connect()
     devices = await client.list_devices()
-    match = next((d for d in devices if d.address.lower() == address.lower()), None)
+    match = _find_device(devices, identifier)
     if not match:
-        print(f"no known device with address {address} (scan for it in the TUI first, or pair it)")
+        print(f"no known device matching {identifier!r} (try `bt-tui --list`, or scan in the TUI first)")
         return 1
     try:
         if not match.paired:
@@ -402,10 +433,17 @@ async def _headless_connect(address: str) -> int:
 async def _headless_list() -> int:
     client = BluezClient()
     await client.connect()
+    # A plain list_devices() only shows what BlueZ already knows (paired /
+    # previously seen) -- a brief scan surfaces nearby-but-unknown devices
+    # too, matching what pressing 's' does in the interactive TUI.
+    await client.start_discovery()
+    await asyncio.sleep(4)
+    await client.stop_discovery()
     devices = await client.list_devices()
     for d in devices:
-        status = "connected" if d.connected else ("paired" if d.paired else "known")
-        print(f"{d.address}  {d.display_name!r}  [{status}]")
+        marker = "🔗" if d.connected else ("✓ " if d.paired else "  ")
+        status = "connected" if d.connected else ("paired" if d.paired else "nearby")
+        print(f"{marker} {d.address}  {d.display_name!r}  [{status}]")
     return 0
 
 
