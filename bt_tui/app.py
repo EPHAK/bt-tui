@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -10,6 +11,21 @@ from textual.widgets import Header, Footer, DataTable, Static, Input, Button, La
 
 from .bluez import BluezClient, PairingAgent, Device
 from . import pipewire
+
+STATE_DIR = Path.home() / ".local" / "state" / "bt-tui"
+THEME_FILE = STATE_DIR / "theme"
+
+
+def _load_saved_theme() -> str | None:
+    try:
+        return THEME_FILE.read_text().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def _save_theme(name: str) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    THEME_FILE.write_text(name)
 
 
 class PinModal(ModalScreen[str | None]):
@@ -239,7 +255,13 @@ class BtTuiApp(App):
         yield Static("[dim]s: scan  p: pair  c: connect  d: disconnect  enter: details  r: refresh  q: quit[/dim]", id="hints")
         yield Footer()
 
+    def watch_theme(self, old_theme: str, new_theme: str) -> None:
+        _save_theme(new_theme)
+
     async def on_mount(self) -> None:
+        saved_theme = _load_saved_theme()
+        if saved_theme and saved_theme in self.available_themes:
+            self.theme = saved_theme
         table = self.query_one(DataTable)
         table.add_columns("Status", "Name", "Address", "RSSI")
         await self.client.connect()
